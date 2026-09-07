@@ -27,10 +27,35 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install dependencies
+      # Local dev resolves tods-competition-factory through
+      # `link:../factory` in pnpm-workspace.yaml. CI has no sibling checkout,
+      # so the link must go before install or the package is unresolvable.
+      #
+      # This used to be `pnpm add tods-competition-factory@latest` after the
+      # install. That never actually worked: a pnpm-workspace.yaml `overrides:`
+      # entry OUTRANKS the package.json dependency, so the added version was
+      # ignored and the dangling link survived. Under pnpm 11 the broken tree
+      # happened not to be exercised; under pnpm 12 it surfaces as
+      # "Cannot find package 'tods-competition-factory'" in every suite and as a
+      # Rolldown resolve failure in the Storybook build.
+      #
+      # Strips ONLY lines whose value is a `link:`. Deliberately not the
+      # whole-block regex used in npm-publish.yml, which also deletes the
+      # `typescript: 6.0.3` pin and the `js-yaml@4` security override.
+      # Factory then resolves from the version devDependencies pins, which is
+      # what consumers actually get -- `@latest` could drift ahead of it.
+      - name: Resolve tods-competition-factory from npm (strip the link override)
         run: |
-          pnpm install --no-frozen-lockfile
-          pnpm add tods-competition-factory@latest
+          node -e "
+          const fs = require('fs');
+          const f = 'pnpm-workspace.yaml';
+          const before = fs.readFileSync(f, 'utf8');
+          const after = before.split('\n').filter((l) => !/:\s*link:/.test(l)).join('\n');
+          if (after === before) throw new Error('no link: override found in ' + f);
+          fs.writeFileSync(f, after);
+          "
+
+      - run: pnpm install --no-frozen-lockfile
 
       - run: pnpm build-storybook
 
